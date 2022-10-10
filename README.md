@@ -1,3 +1,7 @@
+# Changes from upstream
+Added BIOS boot support for systems without EFI
+Based on https://github.com/prabirshrestha/simple-ubuntu-installer
+
 # Ubuntu zfsbootmenu install script
 
 This script creates an Ubuntu installation using the ZFS filesystem. The installation has integrated snapshot management using pyznap. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
@@ -18,7 +22,7 @@ Supports:
 ## Usage
 Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
 
-	git clone https://github.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
+	git clone https://github.com/sencode/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
     cd ~/ubuntu-server-zfsbootmenu
     chmod +x ubuntu_server_encrypted_root_zfs.sh
 	
