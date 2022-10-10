@@ -86,10 +86,12 @@ fi
 
 ##Check for EFI boot environment
 if [ -d /sys/firmware/efi ]; then
-   echo "Boot environment check passed. Found EFI boot environment."
+   echo "Boot environment check - Found EFI boot environment."
+   IS_EFI=true
 else
-   echo "Boot environment check failed. EFI boot environment not found. Script requires EFI."
-   exit 1
+   echo "Boot environment check - EFI boot environment not found."
+   IS_EFI=false
+   ##exit 1
 fi
 
 ##Functions
