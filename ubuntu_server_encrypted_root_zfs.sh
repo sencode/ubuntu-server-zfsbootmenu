@@ -375,6 +375,8 @@ debootstrap_part1_Func(){
 			echo "Creating partitions on disk ${diskidnum}."
 			##2.3 create bootloader partition
 			sgdisk -n1:1M:+"$EFI_boot_size"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
+        		sgdisk -A 1:set:2 /dev/disk/by-id/"${diskidnum}" # SN edit: Turn legacy boot attribute on"
+		        sgdisk -c:1:BOOT /dev/disk/by-id/"${diskidnum}" # SN edit: Set partition name to BOOT
 		
 			##2.4 create swap partition 
 			##bug with swap on zfs zvol so use swap on partition:
@@ -386,6 +388,7 @@ debootstrap_part1_Func(){
 			##2.6 Create root pool partition
 			##Unencrypted or ZFS native encryption:
 			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
+		        sgdisk -c:3:ROOT /dev/disk/by-id/"${diskidnum}" # SN edit: Set partition name to ROOT
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		sleep 2
@@ -735,47 +738,88 @@ systemsetupFunc_part3(){
 	
 	identify_ubuntu_dataset_uuid
 
-	mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"$DISKID"-part1 
+	mkdosfs -F 32 -s 1 -n BOOT /dev/disk/by-id/"$DISKID"-part1 
 	sleep 2
 	blkid_part1=""
 	blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${DISKID}"-part1)"
 	echo "$blkid_part1"
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##4.7 Create the EFI filesystem
+		##4.7 Create the Boot filesystem
 
-		##create FAT32 filesystem in EFI partition
+		##create FAT32 filesystem in BOOT partition
 		apt install --yes dosfstools
-		
-		mkdir -p /boot/efi
-		
-		##fstab entries
-		
-		echo /dev/disk/by-uuid/"$blkid_part1" \
-			/boot/efi vfat \
-			defaults \
-			0 0 >> /etc/fstab
-		
-		##mount from fstab entry
-		mount /boot/efi
-		##If mount fails error code is 0. Script won't fail. Need the following check.
-		##Could use "mountpoint" command but not all distros have it. 
-		if grep /boot/efi /proc/mounts; then
-			echo "/boot/efi mounted."
+
+		if [[ "$IS_EFI" == "true" ]]; then
+			echo /dev/disk/by-uuid/"$blkid_part1" /boot/efi vfat defaults 0 0 >> /mnt/etc/fstab
 		else
-			echo "/boot/efi not mounted."
-			exit 1
+			echo /dev/disk/by-uuid/"$blkid_part1" /boot/syslinux vfat defaults 0 0 >> /mnt/etc/fstab
 		fi
+
+
+		# Create an fstab entry and mount
+		if [[ "$IS_EFI" == "true" ]]; then
+			mkdir -p /boot/efi
+			mount /boot/efi
+			
+			##If mount fails error code is 0. Script won't fail. Need the following check.
+			##Could use "mountpoint" command but not all distros have it. 
+			if grep /boot/efi /proc/mounts; then
+				echo "/boot/efi mounted."
+			else
+				echo "/boot/efi not mounted."
+				exit 1
+			fi
+
+			DEBIAN_FRONTEND=noninteractive apt-get --yes install refind
+			refind-install
+			mkdir -p /boot/efi/EFI/ubuntu
+			cat <<- END > /boot/efi/EFI/ubuntu/refind_linux.conf
+			"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
+			"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
+			END
+			
+			
+
+			
+			
+		else
+  			mkdir /boot/syslinux
+  			mount /boot/syslinux
+
+			##If mount fails error code is 0. Script won't fail. Need the following check.
+			##Could use "mountpoint" command but not all distros have it. 
+			if grep /boot/syslinux /proc/mounts; then
+				echo "/boot/syslinux mounted."
+			else
+				echo "/boot/syslinux not mounted."
+				exit 1
+			fi
+
+			# Install the syslinux package, copy modules
+			apt-get install --yes syslinux syslinux-common extlinux
+  			cp -r /usr/lib/syslinux/modules/bios/* /boot/syslinux
+  			# Install extlinux
+			extlinux --install /boot/syslinux
+			# Install the syslinux GPTMBR data
+			dd bs=440 count=1 conv=notrunc if=/usr/lib/syslinux/mbr/gptmbr.bin of=$DISK
+		fi
+
+		
 	EOCHROOT
 
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		
-		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
+
+		DEBIAN_FRONTEND=noninteractive apt-get -yq install kexec-tools
+
 		apt install --yes dpkg-dev git systemd-sysv
 		
-		##Adjust timer on initial rEFInd screen
-		sed -i 's,^timeout .*,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
+		if [[ "$IS_EFI" == "true" ]]; then
+			##Adjust timer on initial rEFInd screen
+			sed -i 's,^timeout .*,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
+		fi
 
 		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
@@ -817,26 +861,49 @@ systemsetupFunc_part4(){
 			compile_zbm_git
 				
 			##configure zfsbootmenu
+			## SN edit below
 			config_zbm(){
-				cat <<-EOF > /etc/zfsbootmenu/config.yaml
+				if [[ "$IS_EFI" == "true" ]]; then
+					cat <<-END > /etc/zfsbootmenu/config.yaml
 					Global:
-					  ManageImages: true
-					  BootMountPoint: /boot/efi
-					  DracutConfDir: /etc/zfsbootmenu/dracut.conf.d
+						ManageImages: true
+						BootMountPoint: /boot/efi
+						DracutConfDir: /etc/zfsbootmenu/dracut.conf.d
 					Components:
-					  ImageDir: /boot/efi/EFI/ubuntu
-					  Versions: false
-					  Enabled: true
-					  syslinux:
-					    Config: /boot/syslinux/syslinux.cfg
-					    Enabled: false
+						ImageDir: /boot/efi/EFI/ubuntu
+						Versions: 3
+						Enabled: true
+					syslinux:
+						Config: /boot/syslinux/syslinux.cfg
+						Enabled: false
 					EFI:
-					  ImageDir: /boot/efi/EFI/ubuntu
-					  Versions: false
-					  Enabled: false
+						ImageDir: /boot/efi/EFI/ubuntu
+						Versions: 2
+						Enabled: false
 					Kernel:
-					  CommandLine: ro quiet loglevel=0
-				EOF
+						CommandLine: zbm.prefer=zroot zbm.import_policy=hostid zbm.set_hostid ro quiet loglevel=0
+					END
+				else
+					cat <<-END > /etc/zfsbootmenu/config.yaml
+					Global:
+						ManageImages: true
+						BootMountPoint: /boot/syslinux
+						DracutConfDir: /etc/zfsbootmenu/dracut.conf.d
+					Components:
+						ImageDir: /boot/syslinux/zfsbootmenu
+						Versions: 3
+						Enabled: true
+					syslinux:
+						Config: /boot/syslinux/syslinux.cfg
+						Enabled: true
+					EFI:
+						ImageDir: /boot/efi/EFI/ubuntu
+						Versions: 2
+						Enabled: false
+					Kernel:
+						CommandLine: zbm.prefer=zroot zbm.import_policy=hostid zbm.set_hostid ro quiet loglevel=0
+					END
+				fi
 			
                 		if [ "$quiet_boot" = "no" ]; then
                     			sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
@@ -857,18 +924,11 @@ systemsetupFunc_part4(){
 				##Generate ZFSBootMenu
 				generate-zbm
 				
-				##Update refind_linux.conf
-				##zfsbootmenu command-line parameters:
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
-				cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
-					"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
-					"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
-				EOF
-				
-				if [ "$quiet_boot" = "no" ]; then
-                    			sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
-                		fi
-
+				if [[ "$IS_EFI" == "true" ]]; then
+					if [ "$quiet_boot" = "no" ]; then
+						sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+					fi
+				fi
 			}
 			config_zbm	
 		}
