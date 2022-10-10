@@ -42,36 +42,43 @@ set -euo pipefail
 ##Variables:
 ubuntuver="jammy" #Ubuntu release to install. "jammy" (22.04).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
+
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
 hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
-zfs_root_password="testtest" #Password for root pool. Minimum 8 characters. "" for no password protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
-locale="en_GB.UTF-8" #New install language setting.
-timezone="Europe/London" #New install timezone setting.
-zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
+zfs_root_password="" #Password for root pool. Minimum 8 characters. "" for no password protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
+locale="en_US.UTF-8" #New install language setting.
+timezone="America/Denver" #New install timezone setting.
 
 RPOOL="rpool" #Root pool name.
-topology_root="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on root pool.
-disks_root="1" #Number of disks in array for root pool. Not used with single topology.
+zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
+topology_root="mirror" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on root pool.
+disks_root="2" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
-openssh="yes" #"yes" to install open-ssh server in new install.
+
 datapool="datapool" #Non-root drive data pool name.
-topology_data="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
-disks_data="1" #Number of disks in array for data pool. Not used with single topology.
+zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
+topology_data="raidz2" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
+disks_data="4" #Number of disks in array for data pool. Not used with single topology.
 zfs_data_password="" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
-zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
+
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
+
+openssh="yes" #"yes" to install open-ssh server in new install.
 remoteaccess_first_boot="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
+ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
+
 timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
 timeout_zbm_no_remote_access="15" #Timeout in seconds for zfsbootmenu when no remote access enabled.
 timeout_zbm_remote_access="30" #Timeout in seconds for zfsbootmenu when remote access enabled.
 quiet_boot="yes" #Set to "no" to show boot sequence.
-ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
+
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
+
 ipv6_apt_fix_live_iso="no" #Try setting to "yes" gif apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
 remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the network.
 remoteaccess_ip_config="dhcp" #"static" or "dhcp". Manual or automatic IP assignment for zfsbootmenu remote access.
@@ -91,7 +98,6 @@ if [ -d /sys/firmware/efi ]; then
 else
    echo "Boot environment check - EFI boot environment not found."
    IS_EFI=false
-   ##exit 1
 fi
 
 ##Functions
@@ -628,7 +634,9 @@ remote_zbm_access_Func(){
 		EOF
 		
 		##Increase ZFSBootMenu timer to allow for remote connection
-		sed -i 's,zbm.timeout=$timeout_zbm_no_remote_access,zbm.timeout=$timeout_zbm_remote_access,' /boot/efi/EFI/ubuntu/refind_linux.conf
+		if [[ "$IS_EFI" == "true" ]]; then
+			sed -i 's,zbm.timeout=$timeout_zbm_no_remote_access,zbm.timeout=$timeout_zbm_remote_access,' /boot/efi/EFI/ubuntu/refind_linux.conf
+		fi	
 		
 		systemctl stop dropbear
 		systemctl disable dropbear
@@ -778,10 +786,6 @@ systemsetupFunc_part3(){
 			"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
 			"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
 			END
-			
-			
-
-			
 			
 		else
   			mkdir /boot/syslinux
