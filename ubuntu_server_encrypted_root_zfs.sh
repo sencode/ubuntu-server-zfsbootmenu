@@ -806,7 +806,7 @@ systemsetupFunc_part3(){
   			# Install extlinux
 			extlinux --install /boot/syslinux
 			# Install the syslinux GPTMBR data
-			dd bs=440 count=1 conv=notrunc if=/usr/lib/syslinux/mbr/gptmbr.bin of=$DISK
+			dd bs=440 count=1 conv=notrunc if=/usr/lib/syslinux/mbr/gptmbr.bin of=/dev/disk/by-id/"${DISKID}"
 		fi
 
 		
