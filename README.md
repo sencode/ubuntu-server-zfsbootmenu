@@ -1,5 +1,5 @@
 # Changes from upstream
-Added BIOS boot support for systems without EFI
+Added BIOS boot support for systems without EFI - doesn't work yet, still working on this.
 Based on https://github.com/prabirshrestha/simple-ubuntu-installer
 
 # Ubuntu zfsbootmenu install script
